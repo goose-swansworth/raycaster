@@ -1,95 +1,126 @@
-use glium::glutin::platform::unix::WindowBuilderExtUnix;
 
-extern crate glium;
+#![deny(clippy::all)]
+#![forbid(unsafe_code)]
 
-fn main() {
-    use glium::glutin::dpi::PhysicalSize;
-    use glium::implement_vertex;
-    use glium::{glutin, Surface};
+use std::usize;
 
-    let event_loop = glutin::event_loop::EventLoop::new();
-    let wb = glutin::window::WindowBuilder::new()
-        .with_base_size(PhysicalSize::new(1600, 900))
-        .with_title("~Raycaster~");
-    let cb = glutin::ContextBuilder::new();
-    let display = glium::Display::new(wb, cb, &event_loop).unwrap();
+use log::error;
+use pixels::{Error, Pixels, SurfaceTexture};
+use winit::dpi::LogicalSize;
+use winit::event::{Event, VirtualKeyCode};
+use winit::event_loop::{ControlFlow, EventLoop};
+use winit::window::WindowBuilder;
+use winit_input_helper::WinitInputHelper;
 
-    #[derive(Copy, Clone)]
-    struct Vertex {
-        position: [f32; 2],
-    }
+const WIDTH: u32 = 900;
+const HEIGHT: u32 = 450;
+const BOX_SIZE: i16 = 64;
 
-    implement_vertex!(Vertex, position);
+/// Representation of the application state. In this example, a box will bounce around the screen.
+struct World {
+    box_x: i16,
+    box_y: i16,
+    velocity_x: i16,
+    velocity_y: i16,
+}
 
-    let vertex1 = Vertex {
-        position: [0.05, -0.05 * (16.0 / 9.0)],
+fn main() -> Result<(), Error> {
+    env_logger::init();
+    let event_loop = EventLoop::new();
+    let mut input = WinitInputHelper::new();
+    let window = {
+        let size = LogicalSize::new(WIDTH as f64, HEIGHT as f64);
+        WindowBuilder::new()
+            .with_title("Hello Pixels")
+            .with_inner_size(size)
+            .with_min_inner_size(size)
+            .build(&event_loop)
+            .unwrap()
     };
-    let vertex2 = Vertex {
-        position: [0.05, 0.05 * (16.0 / 9.0)],
+
+    let mut pixels = {
+        let window_size = window.inner_size();
+        let surface_texture = SurfaceTexture::new(window_size.width, window_size.height, &window);
+        Pixels::new(WIDTH, HEIGHT, surface_texture)?
     };
-    let vertex3 = Vertex {
-        position: [-0.05, -0.05 * (16.0 / 9.0)],
-    };
-    let vertex4 = Vertex {
-        position: [-0.05, 0.05 * (16.0 / 9.0)],
-    };
+    let mut world = World::new();
 
-    let shape = vec![vertex1, vertex2, vertex3, vertex4];
-
-    let vertex_buffer = glium::VertexBuffer::new(&display, &shape).unwrap();
-
-    let indices = glium::index::NoIndices(glium::index::PrimitiveType::TriangleStrip);
-
-    let vertex_shader_src = r#"
-        #version 140
-
-        in vec2 position;
-
-        void main() {
-            gl_Position = vec4(position, 0.0, 1.0);
+    event_loop.run(move |event, _, control_flow| {
+        // Draw the current frame
+        if let Event::RedrawRequested(_) = event {
+            world.draw(pixels.get_frame_mut());
+            if pixels
+                .render()
+                .map_err(|e| error!("pixels.render() failed: {}", e))
+                .is_err()
+            {
+                *control_flow = ControlFlow::Exit;
+                return;
+            }
         }
-    "#;
 
-    let fragment_shader_src = r#"
-        #version 140
+        // Handle input events
+        if input.update(&event) {
+            // Close events
+            if input.key_pressed(VirtualKeyCode::Escape) || input.quit() {
+                *control_flow = ControlFlow::Exit;
+                return;
+            }
 
-        out vec4 color;
+            // Resize the window
+            if let Some(size) = input.window_resized() {
+                pixels.resize_surface(size.width, size.height);
+            }
 
-        void main() {
-            color = vec4(1.0, 0.0, 0.0, 1.0);
-        }
-    "#;
-
-    let program =
-        glium::Program::from_source(&display, vertex_shader_src, fragment_shader_src, None)
-            .unwrap();
-
-    event_loop.run(move |ev, _, control_flow| {
-        let mut target = display.draw();
-        target.clear_color(0.2, 0.2, 0.2, 1.0);
-        target
-            .draw(
-                &vertex_buffer,
-                &indices,
-                &program,
-                &glium::uniforms::EmptyUniforms,
-                &Default::default(),
-            )
-            .unwrap();
-        target.finish().unwrap();
-
-        let next_frame_time =
-            std::time::Instant::now() + std::time::Duration::from_nanos(16_666_667);
-        *control_flow = glutin::event_loop::ControlFlow::WaitUntil(next_frame_time);
-        match ev {
-            glutin::event::Event::WindowEvent { event, .. } => match event {
-                glutin::event::WindowEvent::CloseRequested => {
-                    *control_flow = glutin::event_loop::ControlFlow::Exit;
-                    return;
-                }
-                _ => return,
-            },
-            _ => (),
+            // Update internal state and request a redraw
+            world.update();
+            window.request_redraw();
         }
     });
+}
+
+impl World {
+    /// Create a new `World` instance that can draw a moving box.
+    fn new() -> Self {
+        Self {
+            box_x: 24,
+            box_y: 16,
+            velocity_x: 1,
+            velocity_y: 1,
+        }
+    }
+
+    /// Update the `World` internal state; bounce the box around the screen.
+    fn update(&mut self) {
+        if self.box_x <= 0 || self.box_x + BOX_SIZE > WIDTH as i16 {
+            self.velocity_x *= -1;
+        }
+        if self.box_y <= 0 || self.box_y + BOX_SIZE > HEIGHT as i16 {
+            self.velocity_y *= -1;
+        }
+
+        self.box_x += self.velocity_x;
+        self.box_y += self.velocity_y;
+    }
+
+    /// Draw the `World` state to the frame buffer.
+    ///
+    /// Assumes the default texture format: `wgpu::TextureFormat::Rgba8UnormSrgb`
+    fn draw(&self, frame: &mut [u8]) {
+        
+        let x_offset = 100;
+        let y_offset = 10;
+        let width = 10;
+        
+        for i in 1..11 {
+            let start: usize = (((i + y_offset)*WIDTH + x_offset)*4).try_into().unwrap();
+            let end: usize = (start + 4 * width).try_into().unwrap();
+            for pixel in frame[start..end].chunks_exact_mut(4) {
+                let rgba = [0x5e, 0x48, 0xe8, 0xff];
+                pixel.copy_from_slice(&rgba);
+            
+            }
+               
+        }
+    }
 }
