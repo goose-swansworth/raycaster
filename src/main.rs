@@ -21,6 +21,8 @@ const BLUE: [u8; 4] = [0x05, 0x29, 0x9e, 0xff];
 const GREY: [u8; 4] = [0x3e, 0x42, 0x4b, 0xff];
 const WHITE: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
 
+const DELTAMOVE: f64 = 0.05;
+
 fn draw_tile(frame: &mut [u8], pos_x: usize, pos_y: usize, width: usize, color: [u8; 4]) {
     let row_len: usize = WIDTH.try_into().unwrap();
     for i in 1..width + 1 {
@@ -34,17 +36,17 @@ fn draw_tile(frame: &mut [u8], pos_x: usize, pos_y: usize, width: usize, color: 
 
 struct Map {
     map_array: Array2D<char>,
-    width: u16,
-    height: u16,
+    width: u32,
+    height: u32,
     screen_x: u32,
     screen_y: u32,
-    tile_size: u8,
+    tile_size: u32,
     player_x: f64,
     player_y: f64,
 }
 
 impl Map {
-    fn init(map_str: String, screen_x: u32, screen_y: u32, tile_size: u8) -> Map {
+    fn init(map_str: String, screen_x: u32, screen_y: u32, tile_size: u32) -> Map {
         let rows: Vec<_> = map_str
             .lines()
             .map(|line| line.trim_start().chars().collect())
@@ -52,14 +54,22 @@ impl Map {
         let map_array = Array2D::from_rows(&rows);
         Map {
             map_array: Array2D::from_rows(&rows),
-            width: map_array.num_columns() as u16,
-            height: map_array.num_rows() as u16,
+            width: map_array.num_columns() as u32,
+            height: map_array.num_rows() as u32,
             screen_x,
             screen_y,
             tile_size,
-            player_x: (map_array.num_columns() / 2) as f64,
+            player_x: (map_array.num_columns() as f64) / 2.0,
             player_y: 1.0,
         }
+    }
+
+    fn in_moveable(&self, new_x: f64, new_y: f64) -> bool {
+        let (i, j) = (new_y as usize, new_x as usize);
+        if i >= self.height as usize || j >= self.width as usize {
+            return false;
+        }
+        self.map_array[(i, j)] == '_'
     }
 
     fn draw(&self, frame: &mut [u8]) {
@@ -88,13 +98,13 @@ impl Map {
 
     fn draw_player_on_map(&self, frame: &mut [u8]) {
         //Draw player dot
-        let p_screen_x = self.screen_x
-            + (self.player_x as u32 * self.tile_size as u32) as u32
-            + ((self.width / 2) * self.tile_size as u16) as u32;
-        let p_screen_y = self.screen_y + self.height as u32 * self.tile_size as u32
-            - self.player_y as u32
-            - self.tile_size as u32;
-        draw_tile(frame, p_screen_x as usize, p_screen_y as usize, 1, WHITE);
+        draw_tile(
+            frame,
+            (self.player_x * self.tile_size as f64) as usize + self.screen_x as usize,
+            (self.player_y * self.tile_size as f64) as usize + self.screen_y as usize,
+            1,
+            WHITE,
+        );
     }
 }
 
@@ -103,15 +113,15 @@ struct Game {
 }
 
 impl Game {
-    fn init(map_str: String, map_x: u32, map_y: u32, map_tile_size: u8) -> Game {
+    fn init(map_str: String, map_x: u32, map_y: u32, map_tile_size: u32) -> Game {
         let map = Map::init(map_str, map_x, map_y, map_tile_size);
         Game { map }
     }
 }
 
 fn draw_frame(frame: &mut [u8], scene: &Game) {
+    scene.map.draw(frame);
     scene.map.draw_player_on_map(frame);
-    println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
 }
 
 fn main() -> Result<(), Error> {
@@ -135,19 +145,16 @@ fn main() -> Result<(), Error> {
     };
 
     let map_str: String = String::from(
-        "rrrrrrrrrrrr
-         r__________r
-         r__b____g__r
-         r__________r
-         r__________r
-         r__g____b__r
-         r__________r
-         rrrrrrrrrrrr",
+        "rrrrr
+         r___r
+         r_b_r
+         r___r
+         rrrrr",
     );
 
-    let mut scene = Game::init(map_str, 0, 0, 20);
+    let mut scene = Game::init(map_str, 10, 10, 40);
 
-    scene.map.draw(pixels.get_frame_mut());
+    //scene.map.draw(pixels.get_frame_mut());
 
     event_loop.run(move |event, _, control_flow| {
         // Draw the current frame
@@ -174,20 +181,36 @@ fn main() -> Result<(), Error> {
                 return;
             }
 
-            if input.key_held(VirtualKeyCode::Up) {
-                scene.map.player_y = scene.map.player_y + 0.1;
+            if input.key_pressed(VirtualKeyCode::Up) {
+                let (new_x, new_y) = (scene.map.player_x, scene.map.player_y + DELTAMOVE);
+                if scene.map.in_moveable(new_x, new_y) {
+                    scene.map.player_y = new_y;
+                    println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
+                }
             }
 
-            if input.key_held(VirtualKeyCode::Down) {
-                scene.map.player_y = scene.map.player_y - 0.1;
+            if input.key_pressed(VirtualKeyCode::Down) {
+                let (new_x, new_y) = (scene.map.player_x, scene.map.player_y - DELTAMOVE);
+                if scene.map.in_moveable(new_x, new_y) {
+                    scene.map.player_y = new_y;
+                    println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
+                }
             }
 
-            if input.key_held(VirtualKeyCode::Left) {
-                scene.map.player_x = scene.map.player_x - 0.1;
+            if input.key_pressed(VirtualKeyCode::Left) {
+                let (new_x, new_y) = (scene.map.player_x - DELTAMOVE, scene.map.player_y);
+                if scene.map.in_moveable(new_x, new_y) {
+                    scene.map.player_x = new_x;
+                    println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
+                }
             }
 
-            if input.key_held(VirtualKeyCode::Right) {
-                scene.map.player_x = scene.map.player_x + 0.1;
+            if input.key_pressed(VirtualKeyCode::Right) {
+                let (new_x, new_y) = (scene.map.player_x + DELTAMOVE, scene.map.player_y);
+                if scene.map.in_moveable(new_x, new_y) {
+                    scene.map.player_x = new_x;
+                    println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
+                }
             }
 
             // Resize the window
