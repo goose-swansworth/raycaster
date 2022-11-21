@@ -1,6 +1,7 @@
 #![deny(clippy::all)]
 #![forbid(unsafe_code)]
 
+use std::time::Instant;
 use std::usize;
 
 use array2d::Array2D;
@@ -21,16 +22,28 @@ const BLUE: [u8; 4] = [0x05, 0x29, 0x9e, 0xff];
 const GREY: [u8; 4] = [0x3e, 0x42, 0x4b, 0xff];
 const WHITE: [u8; 4] = [0xff, 0xff, 0xff, 0xff];
 
-const DELTAMOVE: f64 = 0.05;
+const DELTAMOVE: f64 = 100000.0;
+const MAP_TILE_SIZE: u32 = 10;
 
 fn draw_tile(frame: &mut [u8], pos_x: usize, pos_y: usize, width: usize, color: [u8; 4]) {
     let row_len: usize = WIDTH.try_into().unwrap();
-    for i in 1..width + 1 {
+    for i in 0..width {
         let start = ((i + pos_y) * row_len + pos_x) * 4;
         let end = start + 4 * width;
         for pixel in frame[start..end].chunks_exact_mut(4) {
             pixel.copy_from_slice(&color);
         }
+    }
+}
+
+fn draw_scanline(frame: &mut [u8], pos_x: usize, width: usize, length: usize, color: [u8; 4]) {
+    let row_len = WIDTH as usize;
+    for i in 0..length {
+        let start = ((i + (HEIGHT as usize - length) / 2) * row_len + pos_x - width / 2) * 4;
+        let end = start + 4 * width;
+        for pixel in frame[start..end].chunks_exact_mut(4) {
+            pixel.copy_from_slice(&color);
+        } 
     }
 }
 
@@ -122,6 +135,9 @@ impl Game {
 fn draw_frame(frame: &mut [u8], scene: &Game) {
     scene.map.draw(frame);
     scene.map.draw_player_on_map(frame);
+    for i in 0..100 {
+        draw_scanline(frame, 1 + i, 1, i + 1, RED);
+    }
 }
 
 fn main() -> Result<(), Error> {
@@ -152,11 +168,11 @@ fn main() -> Result<(), Error> {
          rrrrr",
     );
 
-    let mut scene = Game::init(map_str, 10, 10, 40);
-
-    //scene.map.draw(pixels.get_frame_mut());
-
+    let mut scene = Game::init(map_str, 0, (HEIGHT-1) - 5 * MAP_TILE_SIZE, MAP_TILE_SIZE);
+    
+    
     event_loop.run(move |event, _, control_flow| {
+        let last_frame = Instant::now();
         // Draw the current frame
         if let Event::RedrawRequested(_) = event {
             draw_frame(pixels.get_frame_mut(), &scene);
@@ -170,9 +186,8 @@ fn main() -> Result<(), Error> {
             }
         }
 
-        //let next_frame = last_frame.elapsed();
-        //println!("FPS {}", (1 / next_frame.as_nanos()) / 10 ^ 9);
-
+        let next_frame_time = last_frame.elapsed();
+        
         // Handle input events
         if input.update(&event) {
             // Close events
@@ -180,33 +195,36 @@ fn main() -> Result<(), Error> {
                 *control_flow = ControlFlow::Exit;
                 return;
             }
+            
+            let move_amount = next_frame_time.as_secs_f64() * DELTAMOVE;
+            //println!("FPS: {}", 1.0 / move_amount);
 
-            if input.key_pressed(VirtualKeyCode::Up) {
-                let (new_x, new_y) = (scene.map.player_x, scene.map.player_y + DELTAMOVE);
+            if input.key_held(VirtualKeyCode::Up) {
+                let (new_x, new_y) = (scene.map.player_x, scene.map.player_y + move_amount);
                 if scene.map.in_moveable(new_x, new_y) {
                     scene.map.player_y = new_y;
                     println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
                 }
             }
 
-            if input.key_pressed(VirtualKeyCode::Down) {
-                let (new_x, new_y) = (scene.map.player_x, scene.map.player_y - DELTAMOVE);
+            if input.key_held(VirtualKeyCode::Down) {
+                let (new_x, new_y) = (scene.map.player_x, scene.map.player_y - move_amount);
                 if scene.map.in_moveable(new_x, new_y) {
                     scene.map.player_y = new_y;
                     println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
                 }
             }
 
-            if input.key_pressed(VirtualKeyCode::Left) {
-                let (new_x, new_y) = (scene.map.player_x - DELTAMOVE, scene.map.player_y);
+            if input.key_held(VirtualKeyCode::Left) {
+                let (new_x, new_y) = (scene.map.player_x - move_amount, scene.map.player_y);
                 if scene.map.in_moveable(new_x, new_y) {
                     scene.map.player_x = new_x;
                     println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
                 }
             }
 
-            if input.key_pressed(VirtualKeyCode::Right) {
-                let (new_x, new_y) = (scene.map.player_x + DELTAMOVE, scene.map.player_y);
+            if input.key_held(VirtualKeyCode::Right) {
+                let (new_x, new_y) = (scene.map.player_x + move_amount, scene.map.player_y);
                 if scene.map.in_moveable(new_x, new_y) {
                     scene.map.player_x = new_x;
                     println!("Player ({}, {})", scene.map.player_x, scene.map.player_y);
